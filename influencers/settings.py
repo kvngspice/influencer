@@ -3,6 +3,17 @@ import os
 MEDIA_URL = "/media/"
 MEDIA_ROOT = os.path.join(BASE_DIR, "media")
 
+CORS_ALLOWED_ORIGINS = [
+    'http://localhost:3000',
+    'https://influencerapp-pi.vercel.app/'  # Your Vercel URL
+]
+
+ALLOWED_HOSTS = [
+    '.onrender.com',
+    'localhost',
+    '127.0.0.1'
+]
+
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
