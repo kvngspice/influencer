@@ -1,18 +1,37 @@
 import os
+CORS_ALLOWED_ORIGINS = [
+    "https://influencerapp-pi.vercel.app",
+    "http://localhost:3000",
+]
 
+CORS_ALLOW_CREDENTIALS = True
+
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
+
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
 MEDIA_URL = "/media/"
 MEDIA_ROOT = os.path.join(BASE_DIR, "media")
 
-CORS_ALLOWED_ORIGINS = [
-    'http://localhost:3000',
-    'https://influencerapp-pi.vercel.app/'  # Your Vercel URL
-]
-
-ALLOWED_HOSTS = [
-    '.onrender.com',
-    'localhost',
-    '127.0.0.1'
-]
+# Image upload settings
+MAX_UPLOAD_SIZE = 5242880  # 5MB
+ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/jpg']
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -39,3 +58,10 @@ from django.conf import settings
 from django.conf.urls.static import static
 
 urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+# Add this to ensure media files are served in development
+if DEBUG:
+    MIDDLEWARE += [
+        'django.middleware.security.SecurityMiddleware',
+        'whitenoise.middleware.WhiteNoiseMiddleware',  # Add this if not present
+    ]
