@@ -32,6 +32,8 @@ from .views import (
     complete_payment,
     get_approved_bookings
 )
+from django.conf import settings
+from django.conf.urls.static import static
 
 urlpatterns = [
     path('influencers/', InfluencerListCreateView.as_view(), name='influencer-list'),
@@ -64,4 +66,4 @@ urlpatterns = [
     path('payments/initiate/<int:booking_id>/', initiate_payment, name='initiate-payment'),
     path('payments/complete/<int:payment_id>/', complete_payment, name='complete-payment'),
     path('bookings/approved-pending-payment/', get_approved_bookings, name='approved-bookings'),
-]
+] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

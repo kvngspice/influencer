@@ -268,7 +268,11 @@ class InfluencerDetailView(generics.RetrieveUpdateDestroyAPIView):
 class InfluencerListCreateView(generics.ListCreateAPIView):
     queryset = Influencer.objects.all()
     serializer_class = InfluencerSerializer
-    parser_classes = (JSONParser,)
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
 
     def create(self, request, *args, **kwargs):
         try:
@@ -299,79 +303,28 @@ class CampaignDetailView(generics.RetrieveUpdateDestroyAPIView):
 @api_view(['POST'])
 def create_booking(request):
     try:
-        print("Received booking request data:", request.data)  # Debug log
-        influencer_id = request.data.get("influencer_id")
-        campaign_id = request.data.get("campaign_id")
-
-        print(f"Attempting to create booking with influencer_id: {influencer_id}, campaign_id: {campaign_id}")  # Debug log
-
-        # Validate input
-        if not influencer_id or not campaign_id:
-            print("Missing required fields")  # Debug log
-            return Response({
-                'error': 'Both influencer_id and campaign_id are required',
-                'received_data': request.data
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        # Check if influencer and campaign exist
-        try:
-            influencer = Influencer.objects.get(id=influencer_id)
-            campaign = Campaign.objects.get(id=campaign_id)
-            print(f"Found influencer: {influencer.name} and campaign: {campaign.name}")  # Debug log
-        except Influencer.DoesNotExist:
-            print(f"Influencer with id {influencer_id} not found")  # Debug log
-            return Response({
-                'error': f'Influencer with id {influencer_id} not found'
-            }, status=status.HTTP_404_NOT_FOUND)
-        except Campaign.DoesNotExist:
-            print(f"Campaign with id {campaign_id} not found")  # Debug log
-            return Response({
-                'error': f'Campaign with id {campaign_id} not found'
-            }, status=status.HTTP_404_NOT_FOUND)
-
-        # Check if booking already exists
-        existing_booking = Booking.objects.filter(influencer=influencer, campaign=campaign).first()
-        if existing_booking:
-            print(f"Booking already exists with id: {existing_booking.id}")  # Debug log
-            return Response({
-                'error': 'Booking already exists for this influencer and campaign',
-                'booking_id': existing_booking.id
-            }, status=status.HTTP_400_BAD_REQUEST)
-
+        # Get data from request
+        campaign_id = request.data.get('campaign_id')
+        influencer_id = request.data.get('influencer_id')
+        
         # Create the booking
-        try:
-            booking = Booking.objects.create(
-                influencer=influencer,
-                campaign=campaign,
-                status="pending"
-            )
-            print(f"Successfully created booking with id: {booking.id}")  # Debug log
-        except Exception as e:
-            print(f"Error creating booking in database: {str(e)}")  # Debug log
-            raise
-
-        # Create notification
-        try:
-            InfluencerNotification.objects.create(
-                influencer=influencer,
-                message=f"New booking request for campaign: {campaign.name}"
-            )
-            print("Created notification for influencer")  # Debug log
-        except Exception as e:
-            print(f"Error creating notification: {str(e)}")  # Debug log
-            # Don't raise here - notification failure shouldn't fail the booking
-
+        booking = Booking.objects.create(
+            campaign_id=campaign_id,
+            influencer_id=influencer_id,
+            status='pending'
+        )
+        
+        # Return success response
         return Response({
             'message': 'Booking created successfully',
             'booking_id': booking.id
         }, status=status.HTTP_201_CREATED)
-
+        
     except Exception as e:
-        print(f"Unexpected error in create_booking: {str(e)}")  # Debug log
+        print(f"Error creating booking: {str(e)}")
         return Response({
-            'error': 'Failed to create booking',
-            'detail': str(e)
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            'error': str(e)
+        }, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['GET'])
 def campaign_matches(request, campaign_id):
@@ -727,16 +680,29 @@ def admin_add_influencer(request):
             'tiktok_url': request.data.get('tiktok_url'),
             'youtube_url': request.data.get('youtube_url'),
             'twitter_url': request.data.get('twitter_url'),
+            'profile_picture': request.FILES.get('profile_picture')
         }
 
-        # Handle profile picture separately
-        if 'profile_picture' in request.FILES:
-            data['profile_picture'] = request.FILES['profile_picture']
-
-        serializer = InfluencerSerializer(data=data)
+        serializer = InfluencerSerializer(data=data, context={'request': request})  # Add request context
         if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
+            influencer = serializer.save()
+            return Response({
+                'message': 'Influencer added successfully',
+                'influencer_id': influencer.id,
+                'name': influencer.name,
+                'platform': influencer.platform,
+                'followers_count': influencer.followers_count,
+                'niche': influencer.niche,
+                'social_media_handle': influencer.social_media_handle,
+                'region': influencer.region,
+                'interests': influencer.interests,
+                'demography': influencer.demography,
+                'instagram_url': influencer.instagram_url,
+                'tiktok_url': influencer.tiktok_url,
+                'youtube_url': influencer.youtube_url,
+                'twitter_url': influencer.twitter_url,
+                'profile_picture': request.build_absolute_uri(influencer.profile_picture.url) if influencer.profile_picture else None
+            }, status=status.HTTP_201_CREATED)
         
         print("Validation errors:", serializer.errors)  # Debug log
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -784,22 +750,20 @@ def admin_list_bookings(request):
 def admin_list_influencers(request):
     try:
         influencers = Influencer.objects.all()
-        data = [{
-            'id': influencer.id,
-            'name': influencer.name,
-            'platform': influencer.platform,
-            'followers_count': influencer.followers_count,
-            'interests': influencer.interests,
-            'demography': influencer.demography,
-            'instagram_url': influencer.instagram_url,
-            'tiktok_url': influencer.tiktok_url,
-            'youtube_url': influencer.youtube_url,
-            'twitter_url': influencer.twitter_url,
-            'social_media_handle': influencer.social_media_handle,
-        } for influencer in influencers]
-        return Response(data)
+        print("Influencers data:", [
+            {
+                'id': inf.id,
+                'name': inf.name,
+                'base_fee': inf.base_fee,
+                'type': type(inf.base_fee)
+            } 
+            for inf in influencers
+        ])  # Debug log
+        serializer = InfluencerSerializer(influencers, many=True)
+        return Response(serializer.data)
     except Exception as e:
-        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        print(f"Error in admin_list_influencers: {str(e)}")
+        return Response({'error': str(e)}, status=500)
 
 @api_view(['GET'])
 def admin_list_campaigns(request):
@@ -819,25 +783,42 @@ def admin_delete_campaign(request, pk):
     except Campaign.DoesNotExist:
         return Response(status=status.HTTP_404_NOT_FOUND)
 
-@api_view(['GET', 'PUT', 'DELETE'])
+@api_view(['PUT'])
 def admin_edit_influencer(request, pk):
     try:
         influencer = Influencer.objects.get(pk=pk)
+        print(f"Current base_fee: {influencer.base_fee}")  # Debug log
     except Influencer.DoesNotExist:
-        return Response(status=status.HTTP_404_NOT_FOUND)
+        return Response({'error': 'Influencer not found'}, status=404)
 
-    if request.method == 'GET':
-        serializer = InfluencerSerializer(influencer)
-        return Response(serializer.data)
-    elif request.method == 'PUT':
-        serializer = InfluencerSerializer(influencer, data=request.data, partial=True)
+    try:
+        print("Received data:", request.data)  # Debug incoming data
+        print(f"Received base_fee: {request.data.get('base_fee')}")  # Debug base_fee specifically
+        
+        update_data = {
+            'name': request.data.get('name'),
+            'platform': request.data.get('platform'),
+            'followers_count': request.data.get('followers_count'),
+            'niche': request.data.get('niche'),
+            'social_media_handle': request.data.get('social_media_handle'),
+            'region': request.data.get('region'),
+            'demography': request.data.get('demography'),
+            'base_fee': request.data.get('base_fee'),
+            'interests': request.data.get('interests', '')
+        }
+        
+        serializer = InfluencerSerializer(influencer, data=update_data, partial=True)
         if serializer.is_valid():
-            serializer.save()
+            updated_influencer = serializer.save()
+            print(f"Updated base_fee: {updated_influencer.base_fee}")  # Debug log after save
             return Response(serializer.data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    elif request.method == 'DELETE':
-        influencer.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        
+        print("Validation errors:", serializer.errors)
+        return Response(serializer.errors, status=400)
+        
+    except Exception as e:
+        print(f"Error updating influencer: {str(e)}")
+        return Response({'error': str(e)}, status=400)
 
 @api_view(['DELETE'])
 def admin_delete_influencer(request, pk):

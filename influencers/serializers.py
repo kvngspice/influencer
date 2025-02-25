@@ -33,19 +33,18 @@ class CampaignSerializer(serializers.ModelSerializer):
 
 
 class InfluencerSerializer(serializers.ModelSerializer):
+    profile_picture = serializers.SerializerMethodField()
+
     class Meta:
         model = Influencer
         fields = [
             'id', 'name', 'platform', 'followers_count', 
             'profile_picture', 'niche', 'social_media_handle', 
-            'region', 'interests', 'demography',
+            'region', 'interests', 'demography', 'base_fee',
             'instagram_url', 'tiktok_url', 'youtube_url', 'twitter_url'
         ]
 
     def validate_followers_count(self, value):
-        """
-        Validate that followers_count is a positive integer
-        """
         try:
             value = int(value)
             if value < 0:
@@ -78,6 +77,15 @@ class InfluencerSerializer(serializers.ModelSerializer):
     def validate_twitter_url(self, value):
         return self.validate_url_field(value)
 
+    def validate_base_fee(self, value):
+        try:
+            value = float(value)
+            if value < 0:
+                raise serializers.ValidationError("Base fee must be a positive number")
+            return value
+        except (TypeError, ValueError):
+            raise serializers.ValidationError("Base fee must be a valid number")
+
     def update(self, instance, validated_data):
         """
         Update and return an existing Influencer instance
@@ -91,9 +99,23 @@ class InfluencerSerializer(serializers.ModelSerializer):
         instance.region = validated_data.get('region', instance.region)
         instance.interests = validated_data.get('interests', instance.interests)
         instance.demography = validated_data.get('demography', instance.demography)
+        instance.base_fee = validated_data.get('base_fee', instance.base_fee)
         
         instance.save()
         return instance
+
+    def get_profile_picture(self, obj):
+        if obj.profile_picture:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.profile_picture.url)
+        return None
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # Add debug print
+        print(f"Serializing influencer {instance.id}: base_fee = {instance.base_fee}")
+        return data
 
 
 class BookingSerializer(serializers.ModelSerializer):

@@ -38,6 +38,12 @@ class Influencer(models.Model):
     interests = models.TextField(null=True, blank=True)
     demography = models.TextField(null=True, blank=True)
     region = models.CharField(max_length=100, default="Nigeria")
+    base_fee = models.DecimalField(
+        max_digits=10, 
+        decimal_places=2,
+        default=0.00,
+        help_text="Minimum fee for booking this influencer"
+    )
 
     def get_profile_picture(self):
         """Return a valid profile picture URL or default image"""
@@ -57,7 +63,11 @@ class Influencer(models.Model):
 
     def __str__(self):
         return self.name
-        
+
+    def is_within_budget(self, budget):
+        """Check if influencer's base fee is within the given budget"""
+        return float(self.base_fee) <= float(budget)
+
 from django.db import models
 
 class Campaign(models.Model):
