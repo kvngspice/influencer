@@ -14,7 +14,7 @@ from pathlib import Path
 from datetime import timedelta
 import os
 CORS_ALLOWED_ORIGINS = [
-    "https://your-frontend-domain.vercel.app",
+    "https://influencerapp-pi.vercel.app/",
     "http://localhost:3000",
 ]
 
