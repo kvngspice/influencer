@@ -14,7 +14,7 @@ from pathlib import Path
 from datetime import timedelta
 import os
 CORS_ALLOWED_ORIGINS = [
-    "https://influencerapp-pi.vercel.app/",
+    "https://influencerapp-pi.vercel.app",
     "http://localhost:3000",
 ]
 
@@ -39,7 +39,7 @@ CORS_ALLOW_HEADERS = [
     "user-agent",
     "x-csrftoken",
     "x-requested-with",
-]
+] 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -151,12 +151,7 @@ USE_TZ = True
 STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
-# Optional: Add STATICFILES_DIRS if you have additional static files directories
-STATICFILES_DIRS = [
-    os.path.join(BASE_DIR, 'static'),
-]
-
-# Make sure the directory exists
+# Media files
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
