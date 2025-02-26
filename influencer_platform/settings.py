@@ -59,7 +59,7 @@ ALLOWED_HOSTS = [
     'localhost',
     '127.0.0.1',
     '.render.com',  # Allow all subdomains on render.com
-    'your-app-name.onrender.com',  # Replace with your actual render URL
+    'influencer-backend-fmh5.onrender.com',  # Replace with your actual render URL
 ]
 
 
