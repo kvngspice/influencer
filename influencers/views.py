@@ -835,8 +835,6 @@ def admin_update_booking_status(request, pk):
         booking = Booking.objects.get(pk=pk)
         new_status = request.data.get('status')
         
-        print(f"Updating booking {pk} status to {new_status}")  # Debug log
-        
         if new_status not in ['approved', 'rejected', 'pending', 'completed']:
             return Response(
                 {'error': 'Invalid status'}, 
@@ -847,13 +845,12 @@ def admin_update_booking_status(request, pk):
         booking.save()
 
         # If booking is approved, create a notification
-        if new_status == 'approved':
-            if booking.campaign.owner:
-                InfluencerNotification.objects.create(
-                    influencer=booking.influencer,
-                    message=f"Your booking for campaign '{booking.campaign.name}' has been approved. Please proceed with payment."
-                )
-                print(f"Created notification for booking {pk}")  # Debug log
+        if new_status == 'approved' and booking.campaign.owner:
+            InfluencerNotification.objects.create(
+                influencer=booking.influencer,
+                message=f"Your booking for campaign '{booking.campaign.name}' has been approved. Please proceed with payment."
+            )
+            print(f"Created notification for booking {pk}")
 
         return Response({
             'message': f'Booking status updated to {new_status}',
@@ -867,7 +864,7 @@ def admin_update_booking_status(request, pk):
             status=status.HTTP_404_NOT_FOUND
         )
     except Exception as e:
-        print(f"Error updating booking status: {str(e)}")  # Debug log
+        print(f"Error updating booking status: {str(e)}")
         return Response(
             {'error': str(e)}, 
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -920,32 +917,86 @@ def admin_booking_detail(request, booking_id):
         )
 
 @api_view(['GET'])
-def admin_campaign_detail(request, campaign_id):
+def admin_get_campaign_details(request, pk):
     try:
-        campaign = Campaign.objects.get(id=campaign_id)
-        data = {
-            'id': campaign.id,
-            'name': campaign.name,
-            'objective': campaign.objective,
-            'platforms': campaign.platforms,
-            'budget': str(campaign.budget),
-            'demography': campaign.demography,
-            'gender': campaign.gender,
-            'region': campaign.region,
-            'industry': campaign.industry,
-            'status': 'Active' if campaign.is_assigned else 'Pending',
-            'created_at': campaign.created_at,
-            'owner': {
-                'id': campaign.owner.id,
-                'username': campaign.owner.username,
-                'email': campaign.owner.email
-            } if campaign.owner else None
-        }
-        return Response(data)
+        campaign = Campaign.objects.prefetch_related(
+            'bookings',
+            'bookings__influencer',
+            'bookings__payment_set'
+        ).get(pk=pk)
+        
+        try:
+            # Serialize campaign data with detailed information
+            data = {
+                'id': campaign.id,
+                'name': campaign.name,
+                'objective': campaign.objective,
+                'platforms': campaign.platforms or [],  # Handle null platforms
+                'budget': str(campaign.budget) if campaign.budget else "0.00",
+                'demography': campaign.demography or "",
+                'gender': campaign.gender or "",
+                'region': campaign.region or "",
+                'industry': campaign.industry or "",
+                'owner': None,  # Initialize as None
+                'bookings': [],  # Initialize as empty list
+                'created_at': campaign.created_at
+            }
+
+            # Add owner data if exists
+            if campaign.owner:
+                data['owner'] = {
+                    'id': campaign.owner.id,
+                    'username': campaign.owner.username,
+                    'email': campaign.owner.email
+                }
+
+            # Add bookings data
+            for booking in campaign.bookings.all():
+                try:
+                    booking_data = {
+                        'id': booking.id,
+                        'status': booking.status,
+                        'created_at': booking.created_at,
+                        'influencer': {
+                            'id': booking.influencer.id,
+                            'name': booking.influencer.name,
+                            'platform': booking.influencer.platform,
+                            'followers_count': booking.influencer.followers_count,
+                            'base_fee': str(booking.influencer.base_fee)
+                        },
+                        'payment_status': None
+                    }
+                    
+                    # Add payment status if exists
+                    payment = booking.payment_set.first()
+                    if payment:
+                        booking_data['payment_status'] = payment.status
+                        
+                    data['bookings'].append(booking_data)
+                except Exception as e:
+                    print(f"Error processing booking {booking.id}: {str(e)}")
+                    continue
+            
+            return Response(data)
+            
+        except Exception as e:
+            print(f"Error serializing campaign data: {str(e)}")
+            return Response(
+                {'error': f'Error processing campaign data: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+            
     except Campaign.DoesNotExist:
-        return Response({'error': 'Campaign not found'}, status=404)
+        return Response(
+            {'error': 'Campaign not found'}, 
+            status=status.HTTP_404_NOT_FOUND
+        )
     except Exception as e:
-        return Response({'error': str(e)}, status=500)
+        print(f"Error fetching campaign details: {str(e)}")
+        return Response(
+            {'error': str(e)}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
 @api_view(['POST'])
 def initiate_payment(request, booking_id):
@@ -1048,3 +1099,12 @@ def get_approved_bookings(request):
     except Exception as e:
         print(f"Error in get_approved_bookings: {str(e)}")
         return Response({'error': str(e)}, status=500)
+
+@api_view(['GET'])
+def list_campaigns(request):
+    try:
+        campaigns = Campaign.objects.prefetch_related('bookings').filter(owner=request.user)
+        serializer = CampaignSerializer(campaigns, many=True)
+        return Response(serializer.data)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

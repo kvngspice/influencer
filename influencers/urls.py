@@ -27,7 +27,7 @@ from .views import (
     admin_list_bookings,
     admin_update_booking_status,
     admin_booking_detail,
-    admin_campaign_detail,
+    admin_get_campaign_details,
     initiate_payment,
     complete_payment,
     get_approved_bookings
@@ -62,7 +62,7 @@ urlpatterns = [
     path('admin/bookings/', admin_list_bookings, name='admin-bookings'),
     path('admin/bookings/<int:pk>/update-status/', admin_update_booking_status, name='admin-update-booking'),
     path('admin/bookings/<int:booking_id>/detail/', admin_booking_detail, name='admin-booking-detail'),
-    path('admin/campaigns/<int:campaign_id>/', admin_campaign_detail, name='admin-campaign-detail'),
+    path('admin/campaigns/<int:pk>/', admin_get_campaign_details, name='admin-campaign-details'),
     path('payments/initiate/<int:booking_id>/', initiate_payment, name='initiate-payment'),
     path('payments/complete/<int:payment_id>/', complete_payment, name='complete-payment'),
     path('bookings/approved-pending-payment/', get_approved_bookings, name='approved-bookings'),

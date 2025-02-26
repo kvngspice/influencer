@@ -5,10 +5,23 @@ from .models import Campaign, Influencer, Booking
 class CampaignSerializer(serializers.ModelSerializer):
     platforms = serializers.ListField(child=serializers.CharField(), required=False, default=list)
     owner = serializers.PrimaryKeyRelatedField(read_only=True)
+    bookings = serializers.SerializerMethodField()
     
     class Meta:
         model = Campaign
-        fields = "__all__"
+        fields = [
+            'id', 
+            'name', 
+            'objective', 
+            'platforms', 
+            'budget', 
+            'demography', 
+            'gender', 
+            'region', 
+            'industry', 
+            'bookings',
+            'owner'
+        ]
 
     def validate(self, data):
         # Ensure platforms is a list
@@ -30,6 +43,25 @@ class CampaignSerializer(serializers.ModelSerializer):
         except Exception as e:
             print(f"Error creating campaign: {str(e)}")  # Debug print
             raise serializers.ValidationError(f"Failed to create campaign: {str(e)}")
+
+    def get_bookings(self, obj):
+        bookings = []
+        for booking in obj.bookings.all():
+            booking_data = {
+                'id': booking.id,
+                'status': booking.status,
+                'influencer_id': booking.influencer.id
+            }
+            # Check if there's a payment for this booking
+            try:
+                payment = booking.payment_set.first()
+                if payment and payment.status == 'completed':
+                    booking_data['status'] = 'paid'
+            except Exception as e:
+                print(f"Error checking payment status: {str(e)}")
+            
+            bookings.append(booking_data)
+        return bookings
 
 
 class InfluencerSerializer(serializers.ModelSerializer):
