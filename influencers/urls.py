@@ -30,7 +30,22 @@ from .views import (
     admin_get_campaign_details,
     initiate_payment,
     complete_payment,
-    get_approved_bookings
+    get_approved_bookings,
+    influencer_dashboard,
+    influencer_bookings,
+    influencer_dashboard_stats,
+    debug_influencers,
+    influencer_profile_setup,
+    influencer_profile_status,
+    test_api,
+    influencer_my_profile,
+    influencer_profile_update,
+    test_auth,
+    influencer_campaigns,
+    accept_campaign,
+    decline_campaign,
+    campaign_assets,
+    quick_add_influencer
 )
 from django.conf import settings
 from django.conf.urls.static import static
@@ -66,4 +81,19 @@ urlpatterns = [
     path('payments/initiate/<int:booking_id>/', initiate_payment, name='initiate-payment'),
     path('payments/complete/<int:payment_id>/', complete_payment, name='complete-payment'),
     path('bookings/approved-pending-payment/', get_approved_bookings, name='approved-bookings'),
+    path('influencer/dashboard/', influencer_dashboard, name='influencer-dashboard'),
+    path('influencer/bookings/', influencer_bookings, name='influencer-bookings'),
+    path('influencer/dashboard/stats/', influencer_dashboard_stats, name='influencer-dashboard-stats'),
+    path('debug/influencers/', debug_influencers, name='debug-influencers'),
+    path('influencers/profile/setup/', influencer_profile_setup, name='influencer-profile-setup'),
+    path('influencers/profile/status/', influencer_profile_status, name='influencer-profile-status'),
+    path('test/', test_api, name='test-api'),
+    path('influencers/my-profile/', influencer_my_profile, name='influencer-my-profile'),
+    path('influencers/profile/update/', influencer_profile_update, name='influencer-profile-update'),
+    path('test-auth/', test_auth, name='test-auth'),
+    path('influencer/campaigns/', influencer_campaigns, name='influencer-campaigns'),
+    path('influencer/campaigns/<int:campaign_id>/accept/', accept_campaign, name='accept-campaign'),
+    path('influencer/campaigns/<int:campaign_id>/decline/', decline_campaign, name='decline-campaign'),
+    path('influencer/campaigns/<int:campaign_id>/assets/', campaign_assets, name='campaign-assets'),
+    path('quick-add-influencer/', quick_add_influencer, name='quick-add-influencer'),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

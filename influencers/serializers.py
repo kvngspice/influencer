@@ -1,9 +1,11 @@
 from rest_framework import serializers
 from .models import Campaign, Influencer, Booking
+import json
 
 
 class CampaignSerializer(serializers.ModelSerializer):
     platforms = serializers.ListField(child=serializers.CharField(), required=False, default=list)
+    platforms_text = serializers.CharField(required=False)
     owner = serializers.PrimaryKeyRelatedField(read_only=True)
     bookings = serializers.SerializerMethodField()
     
@@ -13,7 +15,8 @@ class CampaignSerializer(serializers.ModelSerializer):
             'id', 
             'name', 
             'objective', 
-            'platforms', 
+            'platforms',
+            'platforms_text',
             'budget', 
             'demography', 
             'gender', 
@@ -24,6 +27,8 @@ class CampaignSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, data):
+        data = super().validate(data)
+        
         # Ensure platforms is a list
         if 'platforms' in data and not isinstance(data['platforms'], list):
             if isinstance(data['platforms'], str):
@@ -34,6 +39,13 @@ class CampaignSerializer(serializers.ModelSerializer):
         # Set default values if not provided
         if 'platforms' not in data:
             data['platforms'] = []
+            
+        # Generate platforms_text from platforms
+        data['platforms_text'] = ', '.join(data.get('platforms', []))
+        
+        # Convert "All" gender to a valid choice
+        if data.get('gender') == 'All':
+            data['gender'] = 'Male'  # Or any other default value accepted by your model
             
         return data
 
@@ -66,6 +78,8 @@ class CampaignSerializer(serializers.ModelSerializer):
 
 class InfluencerSerializer(serializers.ModelSerializer):
     profile_picture = serializers.SerializerMethodField()
+    user_username = serializers.SerializerMethodField(read_only=True)
+    social_platforms = serializers.JSONField(required=False, default=list)
 
     class Meta:
         model = Influencer
@@ -73,7 +87,9 @@ class InfluencerSerializer(serializers.ModelSerializer):
             'id', 'name', 'platform', 'followers_count', 
             'profile_picture', 'niche', 'social_media_handle', 
             'region', 'interests', 'demography', 'base_fee',
-            'instagram_url', 'tiktok_url', 'youtube_url', 'twitter_url'
+            'instagram_url', 'tiktok_url', 'youtube_url', 'twitter_url',
+            'user_username',
+            'social_platforms'
         ]
 
     def validate_followers_count(self, value):
@@ -118,6 +134,30 @@ class InfluencerSerializer(serializers.ModelSerializer):
         except (TypeError, ValueError):
             raise serializers.ValidationError("Base fee must be a valid number")
 
+    def validate_social_platforms(self, value):
+        """
+        Ensure social_platforms is a valid list
+        """
+        print(f"Validating social_platforms: {value}, type: {type(value)}")
+        
+        # If it's None or empty, return an empty list
+        if not value:
+            return []
+        
+        # If it's already a list, use it
+        if isinstance(value, list):
+            return value
+        
+        # If it's a string, try to parse it
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError:
+                return []
+        
+        # For any other type, return an empty list
+        return []
+
     def update(self, instance, validated_data):
         """
         Update and return an existing Influencer instance
@@ -132,6 +172,12 @@ class InfluencerSerializer(serializers.ModelSerializer):
         instance.interests = validated_data.get('interests', instance.interests)
         instance.demography = validated_data.get('demography', instance.demography)
         instance.base_fee = validated_data.get('base_fee', instance.base_fee)
+        instance.social_platforms = validated_data.get('social_platforms', instance.social_platforms)
+        instance.bio = validated_data.get('bio', instance.bio)
+        instance.instagram_url = validated_data.get('instagram_url', instance.instagram_url)
+        instance.tiktok_url = validated_data.get('tiktok_url', instance.tiktok_url)
+        instance.youtube_url = validated_data.get('youtube_url', instance.youtube_url)
+        instance.twitter_url = validated_data.get('twitter_url', instance.twitter_url)
         
         instance.save()
         return instance
@@ -143,10 +189,19 @@ class InfluencerSerializer(serializers.ModelSerializer):
                 return request.build_absolute_uri(obj.profile_picture.url)
         return None
 
+    def get_user_username(self, obj):
+        return obj.user.username if obj.user else None
+
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        # Add debug print
-        print(f"Serializing influencer {instance.id}: base_fee = {instance.base_fee}")
+        
+        # Convert social_platforms from string to JSON if needed
+        if isinstance(data.get('social_platforms'), str):
+            try:
+                data['social_platforms'] = json.loads(data['social_platforms'])
+            except (json.JSONDecodeError, TypeError):
+                data['social_platforms'] = []
+        
         return data
 
 

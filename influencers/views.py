@@ -15,6 +15,9 @@ from influencers.models import Profile
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework_simplejwt.authentication import JWTAuthentication
+import traceback
+import json
+from datetime import datetime, timedelta
 
 
 # ✅ Create and Retrieve Bookings
@@ -111,23 +114,48 @@ from influencers.models import Influencer  # Adjust import based on your models
 
 @api_view(['POST'])
 def login_view(request):
-    username = request.data.get("username")
-    password = request.data.get("password")
+    try:
+        username = request.data.get('username')
+        password = request.data.get('password')
+        role = request.data.get('role')
+
+        if not all([username, password, role]):
+            return Response({
+                'error': 'Please provide username, password and role'
+            }, status=400)
     
-    user = authenticate(username=username, password=password)
-    if user:
-        refresh = RefreshToken.for_user(user)
+        user = authenticate(username=username, password=password)
+                
+        if user is not None:
+            try:
+                # Get user profile
+                profile = Profile.objects.get(user=user)
+                
+                # Check if user is trying to log in with the correct role
+                if profile.role != role:
+                    return Response({
+                        'error': f'This account is registered as a {profile.role}, not as a {role}'
+                    }, status=403)
+                
+                refresh = RefreshToken.for_user(user)
+                return Response({
+                    'token': str(refresh.access_token),
+                    'role': profile.role,
+                    'username': user.username,
+                    'message': 'Login successful'
+                })
+            except Profile.DoesNotExist:
+                return Response({
+                    'error': 'User profile not found'
+                }, status=404)
+        else:
+            return Response({
+                'error': 'Invalid credentials'
+            }, status=401)
+    except Exception as e:
         return Response({
-            "message": "Login successful",
-            "role": user.profile.role,
-            "token": str(refresh.access_token),
-            "user": {
-                "id": user.id,
-                "username": user.username,
-                "email": user.email
-            }
-        }, status=200)
-    return Response({"error": "Invalid credentials"}, status=400)
+            'error': f'Server error: {str(e)}'
+        }, status=500)
 
 @api_view(["GET"])
 def search_influencers(request, campaign_id):
@@ -269,6 +297,44 @@ class InfluencerListCreateView(generics.ListCreateAPIView):
     queryset = Influencer.objects.all()
     serializer_class = InfluencerSerializer
 
+    def list(self, request, *args, **kwargs):
+        try:
+            queryset = self.filter_queryset(self.get_queryset())
+            
+            # Use a simpler serialization approach to avoid user field issues
+            data = []
+            for influencer in queryset:
+                item = {
+                    'id': influencer.id,
+                    'name': influencer.name,
+                    'platform': influencer.platform,
+                    'niche': influencer.niche,
+                    'followers_count': influencer.followers_count,
+                    'profile_picture': influencer.get_profile_picture(),
+                    'social_media_handle': influencer.social_media_handle,
+                    'region': influencer.region,
+                    'base_fee': str(influencer.base_fee),
+                    'instagram_url': influencer.instagram_url,
+                    'tiktok_url': influencer.tiktok_url,
+                    'youtube_url': influencer.youtube_url,
+                    'twitter_url': influencer.twitter_url,
+                    'social_links': influencer.get_social_links()
+                }
+                
+                # Only add user info if the field exists and is not None
+                try:
+                    if hasattr(influencer, 'user') and influencer.user:
+                        item['user_username'] = influencer.user.username
+                except:
+                    item['user_username'] = None
+                
+                data.append(item)
+            
+            return Response(data)
+        except Exception as e:
+            print(f"Error in InfluencerListCreateView: {str(e)}")
+            return Response({'error': str(e)}, status=500)
+
     def get_serializer_context(self):
         context = super().get_serializer_context()
         context['request'] = self.request
@@ -336,7 +402,7 @@ def campaign_matches(request, campaign_id):
         
         # Match by platform
         if hasattr(campaign, 'platforms') and campaign.platforms:
-            platforms = campaign.platforms if isinstance(campaign.platforms, list) else [campaign.platforms]
+            platforms = campaign.platforms if isinstance(campaign.platforms, list) else []
             query &= Q(platform__in=platforms)
         
         # Match by content category
@@ -378,45 +444,58 @@ def campaign_matches(request, campaign_id):
         return Response({'error': str(e)}, status=500)
 
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def influencer_profile(request, influencer_id):
+    """
+    Get a specific influencer's profile
+    """
     try:
-        influencer = Influencer.objects.get(id=influencer_id)
+        influencer = Influencer.objects.get(pk=influencer_id)
         
-        # Get campaign history
-        campaign_history = Booking.objects.filter(
-            influencer=influencer
-        ).select_related('campaign').order_by('-created_at')
-        
+        # Use a simpler approach to avoid serialization issues
         data = {
             'id': influencer.id,
             'name': influencer.name,
             'platform': influencer.platform,
             'niche': influencer.niche,
             'followers_count': influencer.followers_count,
-            'profile_picture': influencer.get_profile_picture(),
-            'social_media_handle': influencer.social_media_handle,
-            'interests': influencer.interests,
-            'demography': influencer.demography,
-            'instagram_url': influencer.instagram_url,
-            'tiktok_url': influencer.tiktok_url,
-            'youtube_url': influencer.youtube_url,
-            'twitter_url': influencer.twitter_url,
-            'engagement_rate': '4.5',
-            'avg_likes': influencer.followers_count * 0.045,
-            'avg_comments': influencer.followers_count * 0.002,
-            'campaign_history': [{
-                'name': booking.campaign.name,
-                'duration': '30 days',
-                'performance': 'Good',
-                'status': booking.status
-            } for booking in campaign_history]
+            'social_media_handle': influencer.social_media_handle if hasattr(influencer, 'social_media_handle') else '',
+            'region': influencer.region if hasattr(influencer, 'region') else '',
+            'interests': influencer.interests if hasattr(influencer, 'interests') else '',
+            'bio': influencer.bio if hasattr(influencer, 'bio') else '',
+            'engagement_rate': influencer.engagement_rate if hasattr(influencer, 'engagement_rate') else '',
+            'content_categories': influencer.content_categories if hasattr(influencer, 'content_categories') else '',
+            'demography': influencer.demography if hasattr(influencer, 'demography') else '',
+            'base_fee': str(influencer.base_fee) if hasattr(influencer, 'base_fee') else '',
+            'instagram_url': influencer.instagram_url if hasattr(influencer, 'instagram_url') else '',
+            'tiktok_url': influencer.tiktok_url if hasattr(influencer, 'tiktok_url') else '',
+            'youtube_url': influencer.youtube_url if hasattr(influencer, 'youtube_url') else '',
+            'twitter_url': influencer.twitter_url if hasattr(influencer, 'twitter_url') else '',
         }
+        
+        # Add profile picture URL if it exists
+        if hasattr(influencer, 'profile_picture') and influencer.profile_picture:
+            data['profile_picture'] = request.build_absolute_uri(influencer.profile_picture.url)
+        
+        # Add social platforms if they exist
+        if hasattr(influencer, 'social_platforms') and influencer.social_platforms:
+            if isinstance(influencer.social_platforms, str):
+                try:
+                    data['social_platforms'] = json.loads(influencer.social_platforms)
+                except:
+                    data['social_platforms'] = []
+            else:
+                data['social_platforms'] = influencer.social_platforms
+        
         return Response(data)
     except Influencer.DoesNotExist:
-        return Response({'error': 'Influencer not found'}, status=404)
+        return Response({
+            'error': 'Influencer not found'
+        }, status=404)
     except Exception as e:
-        print(f"Error fetching influencer profile: {str(e)}")
-        return Response({'error': str(e)}, status=500)
+        return Response({
+            'error': str(e)
+        }, status=500)
 
 class InfluencerUpdateView(generics.UpdateAPIView):
     queryset = Influencer.objects.all()
@@ -438,7 +517,66 @@ class InfluencerUpdateView(generics.UpdateAPIView):
                         'details': 'Followers count must be a number'
                     }, status=status.HTTP_400_BAD_REQUEST)
 
-            serializer = self.get_serializer(instance, data=request.data, partial=True)
+            # Handle social_platforms if present
+            social_platforms = request.data.get('social_platforms')
+            print(f"Received social_platforms: {social_platforms}, type: {type(social_platforms)}")
+            
+            if social_platforms:
+                # If it's a string, try to parse it as JSON
+                if isinstance(social_platforms, str):
+                    try:
+                        # Try to parse the JSON string
+                        social_platforms = json.loads(social_platforms)
+                        print(f"Parsed social_platforms: {social_platforms}")
+                        
+                        # Ensure it's a list
+                        if not isinstance(social_platforms, list):
+                            social_platforms = [social_platforms]
+                        
+                        # Update the request data
+                        request.data._mutable = True
+                        request.data['social_platforms'] = social_platforms
+                        request.data._mutable = False
+                    except json.JSONDecodeError as e:
+                        print(f"Error parsing social_platforms JSON: {e}")
+                        print(f"ADD INFLUENCER - Raw social_platforms string: {social_platforms}")
+                        # Set to empty list if parsing fails
+                        request.data._mutable = True
+                        request.data['social_platforms'] = []
+                        request.data._mutable = False
+                elif isinstance(social_platforms, list):
+                    # It's already a list, no need to parse
+                    pass
+                else:
+                    # Convert to list if it's not a list
+                    request.data._mutable = True
+                    request.data['social_platforms'] = []
+                    request.data._mutable = False
+            else:
+                # Set to empty list if not present
+                request.data._mutable = True
+                request.data['social_platforms'] = []
+                request.data._mutable = False
+
+            update_data = {
+                'name': request.data.get('name'),
+                'platform': request.data.get('platform'),
+                'followers_count': request.data.get('followers_count'),
+                'niche': request.data.get('niche'),
+                'social_media_handle': request.data.get('social_media_handle'),
+                'region': request.data.get('region'),
+                'demography': request.data.get('demography'),
+                'base_fee': request.data.get('base_fee'),
+                'interests': request.data.get('interests', ''),
+                'bio': request.data.get('bio', ''),
+                'social_platforms': social_platforms,
+                'instagram_url': request.data.get('instagram_url', ''),
+                'tiktok_url': request.data.get('tiktok_url', ''),
+                'youtube_url': request.data.get('youtube_url', ''),
+                'twitter_url': request.data.get('twitter_url', '')
+            }
+            
+            serializer = self.get_serializer(instance, data=update_data, partial=True)
             
             if serializer.is_valid():
                 updated_instance = serializer.save()
@@ -470,32 +608,76 @@ class InfluencerUpdateView(generics.UpdateAPIView):
 @api_view(['POST'])
 def register_view(request):
     try:
-        data = request.data
+        username = request.data.get('username')
+        email = request.data.get('email')
+        password = request.data.get('password')
+        role = request.data.get('role')
         
-        # Check if user already exists
-        if User.objects.filter(username=data['username']).exists():
-            return Response({'error': 'Username already exists'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        if User.objects.filter(email=data['email']).exists():
-            return Response({'error': 'Email already exists'}, status=status.HTTP_400_BAD_REQUEST)
-        
+        if not all([username, email, password, role]):
+            return Response({
+                'error': 'Please provide all required fields'
+            }, status=400)
+            
+        # Check if role is valid
+        if role not in ['client', 'influencer']:
+            return Response({
+                'error': 'Invalid role. Must be either "client" or "influencer"'
+            }, status=400)
+            
+        # Check if username already exists
+        if User.objects.filter(username=username).exists():
+            return Response({
+                'error': 'Username already exists'
+            }, status=400)
+            
         # Create user
         user = User.objects.create_user(
-            username=data['username'],
-            email=data['email'],
-            password=data['password']
+            username=username,
+            email=email,
+            password=password
         )
         
-        # Create profile with role
-        Profile.objects.create(
-            user=user,
-            role=data['role']
-        )
+        # Create profile with specified role
+        Profile.objects.create(user=user, role=role)
         
-        return Response({'message': 'Registration successful'}, status=status.HTTP_201_CREATED)
-    
+        # If role is influencer, create an Influencer profile
+        if role == 'influencer':
+            try:
+                Influencer.objects.create(
+                    user=user,  # Try with user field
+                    name=username,
+                    platform="Instagram",
+                    niche="General",
+                    followers_count=0
+                )
+            except Exception as e:
+                # If that fails, try without user field
+                print(f"Error creating influencer with user: {str(e)}")
+                try:
+                    Influencer.objects.create(
+                        name=username,
+                        platform="Instagram",
+                        niche="General",
+                        followers_count=0
+                    )
+                except Exception as e2:
+                    print(f"Error creating influencer without user: {str(e2)}")
+                    # Continue anyway, we at least have the user and profile
+        
+        # Generate token
+        refresh = RefreshToken.for_user(user)
+        
+        return Response({
+            'message': 'Registration successful',
+            'token': str(refresh.access_token),
+            'role': role,
+            'username': user.username
+        })
+        
     except Exception as e:
-        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({
+            'error': f'Registration failed: {str(e)}'
+        }, status=500)
 
 @api_view(['GET'])
 def match_influencers(request, campaign_id):
@@ -663,56 +845,46 @@ def admin_list_campaigns(request):
 @api_view(['POST'])
 @parser_classes([MultiPartParser, FormParser])
 def admin_add_influencer(request):
+    """
+    Add a new influencer (admin only)
+    """
     try:
-        print("Received data:", request.data)  # Debug log
+        # Create a mutable copy of the request data
+        mutable_data = request.data.copy()
         
-        data = {
-            'name': request.data.get('name'),
-            'platform': request.data.get('platform'),
-            'followers_count': request.data.get('followers_count'),
-            'niche': request.data.get('niche'),
-            'social_media_handle': request.data.get('social_media_handle'),
-            'region': request.data.get('region', 'Nigeria'),
-            'interests': request.data.get('interests'),
-            'demography': request.data.get('demography'),
-            # Add social media URLs
-            'instagram_url': request.data.get('instagram_url'),
-            'tiktok_url': request.data.get('tiktok_url'),
-            'youtube_url': request.data.get('youtube_url'),
-            'twitter_url': request.data.get('twitter_url'),
-            'profile_picture': request.FILES.get('profile_picture')
-        }
-
-        serializer = InfluencerSerializer(data=data, context={'request': request})  # Add request context
+        # Set social_platforms to an empty list by default
+        mutable_data['social_platforms'] = []
+        
+        # Debug the request data
+        print("ADD INFLUENCER - Request data:", {
+            key: request.data.get(key) for key in request.data.keys()
+        })
+        
+        # Create the serializer with the processed data
+        serializer = InfluencerSerializer(data=mutable_data)
+        
         if serializer.is_valid():
             influencer = serializer.save()
+            print(f"ADD INFLUENCER - Saved influencer with social_platforms: {influencer.social_platforms}")
             return Response({
                 'message': 'Influencer added successfully',
-                'influencer_id': influencer.id,
-                'name': influencer.name,
-                'platform': influencer.platform,
-                'followers_count': influencer.followers_count,
-                'niche': influencer.niche,
-                'social_media_handle': influencer.social_media_handle,
-                'region': influencer.region,
-                'interests': influencer.interests,
-                'demography': influencer.demography,
-                'instagram_url': influencer.instagram_url,
-                'tiktok_url': influencer.tiktok_url,
-                'youtube_url': influencer.youtube_url,
-                'twitter_url': influencer.twitter_url,
-                'profile_picture': request.build_absolute_uri(influencer.profile_picture.url) if influencer.profile_picture else None
-            }, status=status.HTTP_201_CREATED)
-        
-        print("Validation errors:", serializer.errors)  # Debug log
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
+                'influencer': {
+                    'id': influencer.id,
+                    'name': influencer.name
+                }
+            })
+        else:
+            print("ADD INFLUENCER - Validation errors:", serializer.errors)
+            return Response({
+                'error': 'Invalid data',
+                'details': serializer.errors
+            }, status=400)
     except Exception as e:
-        print(f"Error in admin_add_influencer: {str(e)}")  # Debug log
-        return Response(
-            {'error': str(e)}, 
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
+        print(f"ADD INFLUENCER - Error: {str(e)}")
+        traceback.print_exc()  # Print the full traceback
+        return Response({
+            'error': str(e)
+        }, status=500)
 
 @api_view(['GET'])
 def admin_list_bookings(request):
@@ -749,18 +921,54 @@ def admin_list_bookings(request):
 @api_view(['GET'])
 def admin_list_influencers(request):
     try:
+        # Check if social_platforms field exists
+        from django.db import connection
+        cursor = connection.cursor()
+        cursor.execute("PRAGMA table_info(influencers_influencer)")
+        columns = [column[1] for column in cursor.fetchall()]
+        
+        has_social_platforms = 'social_platforms' in columns
+        has_bio = 'bio' in columns
+        
+        # Get all influencers
         influencers = Influencer.objects.all()
-        print("Influencers data:", [
-            {
-                'id': inf.id,
-                'name': inf.name,
-                'base_fee': inf.base_fee,
-                'type': type(inf.base_fee)
-            } 
-            for inf in influencers
-        ])  # Debug log
-        serializer = InfluencerSerializer(influencers, many=True)
-        return Response(serializer.data)
+        
+        # Manually serialize to avoid the missing field
+        data = []
+        for influencer in influencers:
+            item = {
+                'id': influencer.id,
+                'name': influencer.name,
+                'platform': influencer.platform,
+                'niche': influencer.niche,
+                'followers_count': influencer.followers_count,
+                'region': influencer.region,
+                'demography': influencer.demography,
+                'base_fee': influencer.base_fee,
+                'instagram_url': influencer.instagram_url,
+                'tiktok_url': influencer.tiktok_url,
+                'youtube_url': influencer.youtube_url,
+                'twitter_url': influencer.twitter_url,
+            }
+            
+            # Only include social_platforms if the field exists
+            if has_social_platforms:
+                item['social_platforms'] = influencer.social_platforms
+            else:
+                item['social_platforms'] = []
+                
+            # Only include bio if the field exists
+            if has_bio:
+                item['bio'] = influencer.bio
+            else:
+                item['bio'] = ''
+                
+            data.append(item)
+            
+        # Debug the data being sent
+        print("Sending influencer data:", data)
+        
+        return Response(data)
     except Exception as e:
         print(f"Error in admin_list_influencers: {str(e)}")
         return Response({'error': str(e)}, status=500)
@@ -787,13 +995,31 @@ def admin_delete_campaign(request, pk):
 def admin_edit_influencer(request, pk):
     try:
         influencer = Influencer.objects.get(pk=pk)
-        print(f"Current base_fee: {influencer.base_fee}")  # Debug log
+        print(f"Current social_platforms: {influencer.social_platforms}")
+        print(f"Current URLs: Instagram={influencer.instagram_url}, TikTok={influencer.tiktok_url}, YouTube={influencer.youtube_url}, Twitter={influencer.twitter_url}")
     except Influencer.DoesNotExist:
         return Response({'error': 'Influencer not found'}, status=404)
 
     try:
-        print("Received data:", request.data)  # Debug incoming data
-        print(f"Received base_fee: {request.data.get('base_fee')}")  # Debug base_fee specifically
+        print("Received data:", request.data)
+        
+        # Debug the social_platforms data specifically
+        social_platforms = request.data.get('social_platforms')
+        print(f"Received social_platforms: {social_platforms}, type: {type(social_platforms)}")
+        
+        # Debug the URLs
+        instagram_url = request.data.get('instagram_url')
+        tiktok_url = request.data.get('tiktok_url')
+        youtube_url = request.data.get('youtube_url')
+        twitter_url = request.data.get('twitter_url')
+        print(f"Received URLs: Instagram={instagram_url}, TikTok={tiktok_url}, YouTube={youtube_url}, Twitter={twitter_url}")
+        
+        # Ensure it's a list
+        if not isinstance(social_platforms, list):
+            print(f"Converting social_platforms to list: {social_platforms}")
+            social_platforms = [social_platforms] if social_platforms else []
+        
+        print(f"Final social_platforms before update: {social_platforms}")
         
         update_data = {
             'name': request.data.get('name'),
@@ -804,13 +1030,20 @@ def admin_edit_influencer(request, pk):
             'region': request.data.get('region'),
             'demography': request.data.get('demography'),
             'base_fee': request.data.get('base_fee'),
-            'interests': request.data.get('interests', '')
+            'interests': request.data.get('interests', ''),
+            'bio': request.data.get('bio', ''),
+            'social_platforms': social_platforms,
+            'instagram_url': instagram_url,
+            'tiktok_url': tiktok_url,
+            'youtube_url': youtube_url,
+            'twitter_url': twitter_url
         }
         
         serializer = InfluencerSerializer(influencer, data=update_data, partial=True)
         if serializer.is_valid():
             updated_influencer = serializer.save()
-            print(f"Updated base_fee: {updated_influencer.base_fee}")  # Debug log after save
+            print(f"Saved social_platforms: {updated_influencer.social_platforms}")
+            print(f"Saved URLs: Instagram={updated_influencer.instagram_url}, TikTok={updated_influencer.tiktok_url}, YouTube={updated_influencer.youtube_url}, Twitter={updated_influencer.twitter_url}")
             return Response(serializer.data)
         
         print("Validation errors:", serializer.errors)
@@ -1108,3 +1341,610 @@ def list_campaigns(request):
         return Response(serializer.data)
     except Exception as e:
         return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def influencer_dashboard(request):
+    """
+    Get dashboard data for influencers
+    """
+    try:
+        # Get the influencer profile
+        print(f"Looking for influencer profile for user: {request.user.username}")
+        influencer = Influencer.objects.get(user=request.user)
+        print(f"Found influencer: {influencer.name}")
+        
+        # Get bookings for this influencer
+        bookings = Booking.objects.filter(influencer=influencer)
+        
+        # Calculate statistics
+        stats = {
+            'totalCampaigns': bookings.count(),
+            'activeBookings': bookings.filter(status='approved').count(),
+            'earnings': sum(booking.campaign.budget for booking in bookings.filter(status='completed')),
+            'pendingRequests': bookings.filter(status='pending').count()
+        }
+        
+        # Get recent campaign requests
+        recent_campaigns = [{
+            'id': booking.campaign.id,
+            'name': booking.campaign.name,
+            'brand': booking.campaign.owner.username if booking.campaign.owner else 'Unknown',
+            'status': booking.status,
+            'budget': float(booking.campaign.budget),
+            'created_at': booking.created_at
+        } for booking in bookings.order_by('-created_at')[:5]]
+
+        return Response({
+            'stats': stats,
+            'campaigns': recent_campaigns
+        })
+
+    except Influencer.DoesNotExist:
+        return Response({
+            'error': 'Influencer profile not found'
+        }, status=404)
+    except Exception as e:
+        return Response({
+            'error': str(e)
+        }, status=500)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def influencer_bookings(request):
+    """
+    Get all bookings for the logged-in influencer
+    """
+    try:
+        influencer = Influencer.objects.get(user=request.user)
+        
+        # Get all bookings for this influencer
+        bookings = Booking.objects.filter(influencer=influencer)
+        
+        # Prepare the response data
+        bookings_data = []
+        
+        for booking in bookings:
+            campaign = booking.campaign
+            
+            booking_data = {
+                'id': booking.id,
+                'campaign': {
+                    'id': campaign.id,
+                    'name': campaign.name,
+                    'description': campaign.objective,
+                    'budget': float(campaign.budget),
+                    'platforms': campaign.platforms
+                },
+                'status': booking.status,
+                'created_at': booking.created_at,
+                'name': campaign.name,  # For compatibility with existing code
+                'description': campaign.objective,
+                'brand_name': campaign.owner.username if campaign.owner else 'Unknown',
+                'platform': campaign.platforms[0] if campaign.platforms else 'Multiple',
+                'budget': float(campaign.budget)
+            }
+            
+            bookings_data.append(booking_data)
+        
+        return Response(bookings_data)
+        
+    except Influencer.DoesNotExist:
+        return Response({
+            'error': 'Influencer profile not found'
+        }, status=404)
+    except Exception as e:
+        return Response({
+            'error': str(e)
+        }, status=500)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def influencer_dashboard_stats(request):
+    """
+    Get dashboard statistics for the logged-in influencer
+    """
+    try:
+        influencer = Influencer.objects.get(user=request.user)
+        bookings = Booking.objects.filter(influencer=influencer)
+        
+        stats = {
+            'totalCampaigns': bookings.count(),
+            'activeBookings': bookings.filter(status='approved').count(),
+            'earnings': sum(booking.campaign.budget for booking in bookings.filter(status='completed')),
+            'pendingRequests': bookings.filter(status='pending').count()
+        }
+        
+        return Response(stats)
+    except Exception as e:
+        return Response({
+            'error': str(e)
+        }, status=500)
+
+@api_view(['GET'])
+def debug_influencers(request):
+    """
+    Debug endpoint to check influencer data
+    """
+    try:
+        influencers = Influencer.objects.all()
+        data = []
+        
+        for influencer in influencers:
+            item = {
+                'id': influencer.id,
+                'name': influencer.name,
+                'platform': influencer.platform,
+                'niche': influencer.niche,
+                'followers_count': influencer.followers_count,
+                'has_user': influencer.user is not None,
+                'user_id': influencer.user.id if influencer.user else None,
+                'user_username': influencer.user.username if influencer.user else None
+            }
+            data.append(item)
+        
+        return Response({
+            'count': len(data),
+            'influencers': data
+        })
+    except Exception as e:
+        return Response({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }, status=500)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser])
+def influencer_profile_setup(request):
+    """
+    Setup or update influencer profile after registration
+    """
+    try:
+        # Check if user already has an influencer profile
+        try:
+            influencer = Influencer.objects.get(user=request.user)
+            # Update existing profile
+            serializer = InfluencerSerializer(influencer, data=request.data, partial=True)
+        except Influencer.DoesNotExist:
+            # Create new profile
+            data = request.data.copy()
+            data['user'] = request.user.id
+            serializer = InfluencerSerializer(data=data)
+        
+        if serializer.is_valid():
+            influencer = serializer.save()
+            
+            # Update user profile to ensure role is set to influencer
+            profile, created = Profile.objects.get_or_create(
+                user=request.user,
+                defaults={'role': 'influencer'}
+            )
+            if not created and profile.role != 'influencer':
+                profile.role = 'influencer'
+                profile.save()
+            
+            return Response({
+                'message': 'Profile updated successfully',
+                'profile': serializer.data
+            })
+        else:
+            return Response({
+                'error': 'Invalid data',
+                'details': serializer.errors
+            }, status=400)
+            
+    except Exception as e:
+        print(f"Error in influencer_profile_setup: {str(e)}")
+        return Response({
+            'error': str(e)
+        }, status=500)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def influencer_profile_status(request):
+    """
+    Check if the influencer profile is complete
+    """
+    try:
+        print(f"Checking profile status for user: {request.user.username}")
+        
+        # TESTING: Force incomplete profile
+        return Response({
+            'isComplete': False,
+            'missingFields': ['test']
+        })
+        
+        # Rest of the function...
+    except Exception as e:
+        print(f"Error in influencer_profile_status: {str(e)}")
+        return Response({
+            'error': str(e)
+        }, status=500)
+
+@api_view(['GET'])
+def test_api(request):
+    """
+    Simple test endpoint to verify API is working
+    """
+    return Response({
+        'message': 'API is working',
+        'authenticated': request.user.is_authenticated,
+        'user': request.user.username if request.user.is_authenticated else None
+    })
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def influencer_my_profile(request):
+    """
+    Get the logged-in influencer's profile
+    """
+    try:
+        print(f"Fetching profile for user: {request.user.username}")
+        
+        try:
+            influencer = Influencer.objects.get(user=request.user)
+            print(f"Found influencer profile: {influencer.name}")
+            
+            # Use a simpler approach to avoid serialization issues
+            data = {
+                'id': influencer.id,
+                'name': influencer.name,
+                'gender': influencer.gender if hasattr(influencer, 'gender') else '',
+                'platform': influencer.platform,
+                'niche': influencer.niche,
+                'followers_count': influencer.followers_count,
+                'social_media_handle': influencer.social_media_handle if hasattr(influencer, 'social_media_handle') else '',
+                'region': influencer.region if hasattr(influencer, 'region') else '',
+                'interests': influencer.interests if hasattr(influencer, 'interests') else '',
+                'bio': influencer.bio if hasattr(influencer, 'bio') else '',
+                'instagram_url': influencer.instagram_url if hasattr(influencer, 'instagram_url') else '',
+                'tiktok_url': influencer.tiktok_url if hasattr(influencer, 'tiktok_url') else '',
+                'youtube_url': influencer.youtube_url if hasattr(influencer, 'youtube_url') else '',
+                'twitter_url': influencer.twitter_url if hasattr(influencer, 'twitter_url') else '',
+            }
+            
+            # Add profile picture URL if it exists
+            if hasattr(influencer, 'profile_picture') and influencer.profile_picture:
+                data['profile_picture'] = request.build_absolute_uri(influencer.profile_picture.url)
+            
+            return Response(data)
+            
+        except Influencer.DoesNotExist:
+            print(f"No influencer profile found for user: {request.user.username}")
+            
+            # Create a basic profile for the user
+            influencer = Influencer.objects.create(
+                user=request.user,
+                name=request.user.username,
+                platform="Instagram",
+                niche="General",
+                followers_count=0
+            )
+            
+            return Response({
+                'id': influencer.id,
+                'name': influencer.name,
+                'platform': influencer.platform,
+                'niche': influencer.niche,
+                'followers_count': influencer.followers_count,
+                'message': 'Created new profile'
+            })
+            
+    except Exception as e:
+        print(f"Error in influencer_my_profile: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return Response({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }, status=500)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser])
+def influencer_profile_update(request):
+    """
+    Update the logged-in influencer's profile
+    """
+    try:
+        influencer = Influencer.objects.get(user=request.user)
+        serializer = InfluencerSerializer(influencer, data=request.data, partial=True)
+        
+        if serializer.is_valid():
+            serializer.save()
+            return Response({
+                'message': 'Profile updated successfully',
+                'profile': serializer.data
+            })
+        else:
+            return Response({
+                'error': 'Invalid data',
+                'details': serializer.errors
+            }, status=400)
+    except Influencer.DoesNotExist:
+        return Response({
+            'error': 'Influencer profile not found'
+        }, status=404)
+    except Exception as e:
+        return Response({
+            'error': str(e)
+        }, status=500)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def test_auth(request):
+    """
+    Test endpoint to verify authentication
+    """
+    return Response({
+        'message': 'Authentication successful',
+        'user': request.user.username,
+        'user_id': request.user.id
+    })
+
+@api_view(['PUT'])
+def update_influencer_profile(request):
+    try:
+        # Get the influencer associated with the current user
+        influencer = Influencer.objects.get(user=request.user)
+        
+        # Update the influencer fields
+        if 'name' in request.data:
+            influencer.name = request.data['name']
+        
+        if 'email' in request.data:
+            # Update the user's email
+            request.user.email = request.data['email']
+            request.user.save()
+        
+        if 'phone' in request.data:
+            # Store phone in the profile
+            profile = request.user.profile
+            profile.phone = request.data['phone']
+            profile.save()
+        
+        if 'gender' in request.data:
+            # Store gender in the profile
+            profile = request.user.profile
+            profile.gender = request.data['gender']
+            profile.save()
+        
+        # ... other fields ...
+        
+        # Save the influencer
+        influencer.save()
+        
+        # Return the updated data
+        return Response({
+            'message': 'Profile updated successfully',
+            'name': influencer.name,
+            'email': request.user.email,
+            'phone': request.user.profile.phone if hasattr(request.user, 'profile') else '',
+            'gender': request.user.profile.gender if hasattr(request.user, 'profile') else '',
+            # ... other fields ...
+        })
+    except Influencer.DoesNotExist:
+        return Response({'error': 'Influencer profile not found'}, status=404)
+    except Exception as e:
+        return Response({'error': str(e)}, status=500)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def influencer_campaigns(request):
+    """
+    Get all campaigns for the logged-in influencer
+    """
+    try:
+        influencer = Influencer.objects.get(user=request.user)
+        
+        # Get all bookings for this influencer
+        bookings = Booking.objects.filter(influencer=influencer)
+        
+        # Prepare the response data
+        campaigns_data = []
+        
+        for booking in bookings:
+            campaign = booking.campaign
+            
+            # Get campaign submissions if any
+            submissions = []
+            # You would need to create a model for submissions
+            # This is just a placeholder
+            
+            campaign_data = {
+                'id': campaign.id,
+                'name': campaign.name,
+                'description': campaign.objective,
+                'brand_name': campaign.owner.username if campaign.owner else 'Unknown',
+                'platform': campaign.platforms[0] if campaign.platforms else 'Multiple',
+                'budget': float(campaign.budget),
+                'created_at': campaign.created_at,
+                'booking_date': booking.created_at,
+                'acceptance_date': booking.updated_at if booking.status in ['approved', 'completed'] else None,
+                'status': booking.status,
+                'content_submissions': submissions,
+                'end_date': campaign.created_at + timedelta(days=30),  # Example: 30 days from creation
+                'completion_date': booking.updated_at if booking.status == 'completed' else None,
+                'payment_date': None,  # You would need to add this from your payment model
+                'content_deadline': campaign.created_at + timedelta(days=15),  # Example: 15 days from creation
+                'content_submitted': False  # You would need to check this from your submissions model
+            }
+            
+            campaigns_data.append(campaign_data)
+        
+        return Response(campaigns_data)
+        
+    except Influencer.DoesNotExist:
+        return Response({
+            'error': 'Influencer profile not found'
+        }, status=404)
+    except Exception as e:
+        return Response({
+            'error': str(e)
+        }, status=500)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def accept_campaign(request, campaign_id):
+    """
+    Accept a campaign booking
+    """
+    try:
+        influencer = Influencer.objects.get(user=request.user)
+        booking = Booking.objects.get(campaign_id=campaign_id, influencer=influencer)
+        
+        if booking.status != 'pending':
+            return Response({
+                'error': 'This booking is not in pending status'
+            }, status=400)
+        
+        booking.status = 'approved'
+        booking.save()
+        
+        return Response({
+            'message': 'Campaign accepted successfully'
+        })
+        
+    except (Influencer.DoesNotExist, Booking.DoesNotExist):
+        return Response({
+            'error': 'Booking not found'
+        }, status=404)
+    except Exception as e:
+        return Response({
+            'error': str(e)
+        }, status=500)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def decline_campaign(request, campaign_id):
+    """
+    Decline a campaign booking
+    """
+    try:
+        influencer = Influencer.objects.get(user=request.user)
+        booking = Booking.objects.get(campaign_id=campaign_id, influencer=influencer)
+        
+        if booking.status != 'pending':
+            return Response({
+                'error': 'This booking is not in pending status'
+            }, status=400)
+        
+        booking.status = 'rejected'
+        booking.save()
+        
+        return Response({
+            'message': 'Campaign declined successfully'
+        })
+        
+    except (Influencer.DoesNotExist, Booking.DoesNotExist):
+        return Response({
+            'error': 'Booking not found'
+        }, status=404)
+    except Exception as e:
+        return Response({
+            'error': str(e)
+        }, status=500)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def campaign_assets(request, campaign_id):
+    """
+    Get assets for a specific campaign
+    """
+    try:
+        influencer = Influencer.objects.get(user=request.user)
+        booking = Booking.objects.get(campaign_id=campaign_id, influencer=influencer)
+        
+        # This is a placeholder - you would need to create a model for campaign assets
+        # For now, we'll return some dummy data
+        assets = [
+            {
+                'id': 1,
+                'name': 'Brand Guidelines',
+                'description': 'Official brand guidelines and messaging requirements',
+                'file_type': 'pdf',
+                'size': '2.4 MB',
+                'uploaded_at': booking.created_at,
+                'url': 'https://example.com/assets/brand_guidelines.pdf',
+                'type': 'file'
+            },
+            {
+                'id': 2,
+                'name': 'Product Images',
+                'description': 'High-resolution product images for your content',
+                'file_type': 'image',
+                'size': '5.1 MB',
+                'uploaded_at': booking.created_at,
+                'url': 'https://example.com/assets/product_images.zip',
+                'type': 'file'
+            },
+            {
+                'id': 3,
+                'name': 'Campaign Brief',
+                'description': 'Detailed information about campaign goals and requirements',
+                'file_type': 'docx',
+                'size': '1.2 MB',
+                'uploaded_at': booking.created_at,
+                'url': 'https://example.com/assets/campaign_brief.docx',
+                'type': 'file'
+            },
+            {
+                'id': 4,
+                'name': 'Product Website',
+                'description': 'Official product website for reference',
+                'file_type': 'link',
+                'size': 'N/A',
+                'uploaded_at': booking.created_at,
+                'url': 'https://example.com/product',
+                'type': 'link'
+            }
+        ]
+        
+        return Response(assets)
+        
+    except (Influencer.DoesNotExist, Booking.DoesNotExist):
+        return Response({
+            'error': 'Booking not found'
+        }, status=404)
+    except Exception as e:
+        return Response({
+            'error': str(e)
+        }, status=500)
+
+@api_view(['POST'])
+def quick_add_influencer(request):
+    try:
+        data = request.data
+        
+        # Create influencer object
+        influencer = Influencer.objects.create(
+            name=data['name'],
+            platform=data['platform'],
+            followers_count=int(data['followers_count']),
+            niche=data['niche'],
+            social_media_handle=data['social_media_handle'],
+            region=data['region'],
+            bio=data.get('bio', ''),
+            social_platforms=data.get('social_platforms', []),
+            demography=data.get('demography', ''),
+            instagram_url=next((p['url'] for p in data.get('social_platforms', []) if p['platform'] == 'Instagram'), None),
+            tiktok_url=next((p['url'] for p in data.get('social_platforms', []) if p['platform'] == 'TikTok'), None),
+            youtube_url=next((p['url'] for p in data.get('social_platforms', []) if p['platform'] == 'YouTube'), None),
+            twitter_url=next((p['url'] for p in data.get('social_platforms', []) if p['platform'] == 'Twitter'), None)
+        )
+        
+        return Response({
+            'message': 'Influencer added successfully',
+            'id': influencer.id
+        }, status=201)
+        
+    except KeyError as e:
+        return Response({
+            'error': f'Missing required field: {str(e)}'
+        }, status=400)
+    except Exception as e:
+        print(f"Error creating influencer: {str(e)}")  # For debugging
+        return Response({
+            'error': str(e)
+        }, status=400)
