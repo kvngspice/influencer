@@ -45,7 +45,8 @@ from .views import (
     accept_campaign,
     decline_campaign,
     campaign_assets,
-    quick_add_influencer
+    quick_add_influencer,
+    admin_login_view
 )
 from django.conf import settings
 from django.conf.urls.static import static
@@ -96,4 +97,5 @@ urlpatterns = [
     path('influencer/campaigns/<int:campaign_id>/decline/', decline_campaign, name='decline-campaign'),
     path('influencer/campaigns/<int:campaign_id>/assets/', campaign_assets, name='campaign-assets'),
     path('quick-add-influencer/', quick_add_influencer, name='quick-add-influencer'),
+    path('auth/admin-login/', admin_login_view, name='admin-login'),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

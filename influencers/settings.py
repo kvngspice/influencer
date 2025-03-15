@@ -2,6 +2,7 @@ import os
 CORS_ALLOWED_ORIGINS = [
     "https://influencerapp-pi.vercel.app",
     "http://localhost:3000",
+    "https://admindash-five.vercel.app",
 ]
 
 CORS_ALLOW_CREDENTIALS = True

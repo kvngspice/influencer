@@ -123,7 +123,7 @@ def login_view(request):
             return Response({
                 'error': 'Please provide username, password and role'
             }, status=400)
-    
+        
         user = authenticate(username=username, password=password)
                 
         if user is not None:
@@ -1948,3 +1948,33 @@ def quick_add_influencer(request):
         return Response({
             'error': str(e)
         }, status=400)
+
+@api_view(['POST'])
+def admin_login_view(request):
+    try:
+        username = request.data.get('username')
+        password = request.data.get('password')
+        
+        if not all([username, password]):
+            return Response({
+                'error': 'Please provide username and password'
+            }, status=400)
+        
+        user = authenticate(username=username, password=password)
+                
+        if user is not None and user.is_staff:  # Check if user is staff/admin
+            refresh = RefreshToken.for_user(user)
+            return Response({
+                'token': str(refresh.access_token),
+                'username': user.username,
+                'message': 'Admin login successful'
+            })
+        else:
+            return Response({
+                'error': 'Invalid credentials or insufficient permissions'
+            }, status=401)
+    except Exception as e:
+        print(f"Admin login error: {str(e)}")  # Add debug print
+        return Response({
+            'error': f'Server error: {str(e)}'
+        }, status=500)
