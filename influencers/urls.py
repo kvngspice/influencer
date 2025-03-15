@@ -46,7 +46,8 @@ from .views import (
     decline_campaign,
     campaign_assets,
     quick_add_influencer,
-    admin_login_view
+    admin_login_view,
+    upload_influencers_excel
 )
 from django.conf import settings
 from django.conf.urls.static import static
@@ -98,4 +99,5 @@ urlpatterns = [
     path('influencer/campaigns/<int:campaign_id>/assets/', campaign_assets, name='campaign-assets'),
     path('quick-add-influencer/', quick_add_influencer, name='quick-add-influencer'),
     path('auth/admin-login/', admin_login_view, name='admin-login'),
+    path('admin/upload-influencers-excel/', upload_influencers_excel, name='upload-influencers-excel'),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

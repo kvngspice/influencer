@@ -18,6 +18,8 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 import traceback
 import json
 from datetime import datetime, timedelta
+import pandas as pd
+import re
 
 
 # ✅ Create and Retrieve Bookings
@@ -228,26 +230,47 @@ def book_influencer(request):
     except Exception as e:
         print("❌ ERROR:", str(e))  # Debugging
         return JsonResponse({"error": str(e)}, status=500)
-from rest_framework.decorators import api_view
-from rest_framework.response import Response
-from .models import Booking
-from .serializers import BookingSerializer
 
 @api_view(['PATCH'])
 def update_booking_status(request, booking_id):
     try:
-        booking = Booking.objects.get(id=booking_id)
+        booking = Booking.objects.get(pk=booking_id)
+        new_status = request.data.get('status')
+        
+        if new_status not in ['approved', 'rejected', 'pending', 'completed']:
+            return Response(
+                {'error': 'Invalid status'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        booking.status = new_status
+        booking.save()
+
+        # If booking is approved, create a notification
+        if new_status == 'approved' and booking.campaign.owner:
+            InfluencerNotification.objects.create(
+                influencer=booking.influencer,
+                message=f"Your booking for campaign '{booking.campaign.name}' has been approved. Please proceed with payment."
+            )
+            print(f"Created notification for booking {booking_id}")
+
+        return Response({
+            'message': f'Booking status updated to {new_status}',
+            'booking_id': booking.id,
+            'status': new_status
+        })
+
     except Booking.DoesNotExist:
-        return Response({"error": "Booking not found"}, status=404)
-
-    status = request.data.get("status")
-    if status not in ["approved", "rejected"]:
-        return Response({"error": "Invalid status"}, status=400)
-
-    booking.status = status
-    booking.save()
-
-    return Response(BookingSerializer(booking).data, status=200)
+        return Response(
+            {'error': 'Booking not found'}, 
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        print(f"Error updating booking status: {str(e)}")
+        return Response(
+            {'error': str(e)}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
 # ✅ Confirm Booking
 @api_view(["POST"])
@@ -1948,6 +1971,157 @@ def quick_add_influencer(request):
         return Response({
             'error': str(e)
         }, status=400)
+
+@api_view(['POST'])
+@parser_classes([MultiPartParser, FormParser])
+def upload_influencers_excel(request):
+    try:
+        excel_file = request.FILES.get('file')
+        if not excel_file:
+            return Response({'error': 'No file uploaded'}, status=400)
+        
+        # Check file extension
+        if not excel_file.name.endswith(('.xlsx', '.xls')):
+            return Response({'error': 'File must be an Excel file (.xlsx or .xls)'}, status=400)
+        
+        # Read Excel file
+        df = pd.read_excel(excel_file)
+        
+        # Validate required columns
+        required_columns = ['name']
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            return Response({
+                'error': f'Missing required columns: {", ".join(missing_columns)}'
+            }, status=400)
+        
+        # Process data
+        success_count = 0
+        error_count = 0
+        errors = []
+        
+        for index, row in df.iterrows():
+            try:
+                # Skip rows that contain "DATA RECEIVED" as these are metadata rows
+                if isinstance(row['name'], str) and "DATA RECEIVED" in row['name']:
+                    continue
+                
+                # Check if essential fields are present
+                if pd.isna(row['name']):
+                    error_count += 1
+                    errors.append(f"Row {index+2}: Missing name")
+                    continue
+                
+                # Get the platform column value
+                platform_text = str(row.get('platform', '')) if not pd.isna(row.get('platform', '')) else ''
+                platform_text = platform_text.replace('"', '').strip()  # Remove quotes and extra spaces
+                
+                # Split the platform text by newlines to get multiple platforms
+                platform_entries = [p.strip() for p in platform_text.split('\n') if p.strip()]
+                
+                # Parse each platform entry
+                social_platforms = []
+                primary_platform = None
+                primary_followers = 0
+                
+                for platform_entry in platform_entries:
+                    # Default values
+                    platform_name = "Unknown"
+                    social_media_handle = ""
+                    followers_count = 0
+                    profile_url = ""
+                    
+                    # Extract platform name
+                    if ":" in platform_entry:
+                        platform_name = platform_entry.split(':')[0].strip()
+                    
+                    # Extract handle - look for @username pattern
+                    handle_match = re.search(r'@(\w+)', platform_entry)
+                    if handle_match:
+                        social_media_handle = handle_match.group(0)
+                    
+                    # Extract followers count - look for numbers followed by "followers"
+                    followers_match = re.search(r'(\d+)\s*followers', platform_entry)
+                    if followers_match:
+                        followers_count = int(followers_match.group(1))
+                    
+                    # Extract URL - look for http or domain patterns
+                    url_match = re.search(r'(https?://[^\s\n]+|(?:www\.)?[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+(?:/\S*)?)', platform_entry)
+                    if url_match:
+                        profile_url = url_match.group(0).strip()
+                        # Add https:// if missing
+                        if profile_url and not profile_url.startswith(('http://', 'https://')):
+                            profile_url = 'https://' + profile_url
+                    
+                    # Add to social platforms list
+                    platform_data = {
+                        'platform': platform_name,
+                        'handle': social_media_handle.replace('@', '') if social_media_handle else '',
+                        'followers_count': followers_count,
+                        'url': profile_url
+                    }
+                    social_platforms.append(platform_data)
+                    
+                    # Track the platform with the most followers as primary
+                    if followers_count > primary_followers:
+                        primary_platform = platform_name
+                        primary_followers = followers_count
+                
+                # If no platforms were found, skip this row
+                if not social_platforms:
+                    error_count += 1
+                    errors.append(f"Row {index+2}: No valid platform information found")
+                    continue
+                
+                # Use the platform with the most followers as primary if available
+                if not primary_platform:
+                    primary_platform = social_platforms[0]['platform']
+                
+                # Create influencer data
+                influencer_data = {
+                    'name': row['name'],
+                    'platform': primary_platform,
+                    'followers_count': primary_followers,
+                    'social_media_handle': next((p['handle'] for p in social_platforms if p['platform'] == primary_platform), ''),
+                    'niche': row.get('niche', ''),
+                    'region': row.get('region', ''),
+                    'bio': row.get('bio', ''),
+                    'demography': row.get('demography', ''),
+                    'social_platforms': social_platforms
+                }
+                
+                # Set social platform URLs
+                for platform in social_platforms:
+                    if platform['platform'] == 'Twitter':
+                        influencer_data['twitter_url'] = platform['url']
+                    elif platform['platform'] == 'Instagram':
+                        influencer_data['instagram_url'] = platform['url']
+                    elif platform['platform'] == 'TikTok':
+                        influencer_data['tiktok_url'] = platform['url']
+                    elif platform['platform'] == 'YouTube':
+                        influencer_data['youtube_url'] = platform['url']
+                
+                # Create or update influencer
+                influencer, created = Influencer.objects.update_or_create(
+                    name=row['name'],
+                    defaults=influencer_data
+                )
+                
+                success_count += 1
+                
+            except Exception as e:
+                error_count += 1
+                errors.append(f"Row {index+2}: {str(e)}")
+        
+        return Response({
+            'message': f'Successfully processed {success_count} influencers',
+            'success_count': success_count,
+            'error_count': error_count,
+            'errors': errors[:10]  # Return first 10 errors only
+        })
+        
+    except Exception as e:
+        return Response({'error': str(e)}, status=500)
 
 @api_view(['POST'])
 def admin_login_view(request):
